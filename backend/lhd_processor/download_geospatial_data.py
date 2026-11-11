@@ -4,6 +4,7 @@ import shutil
 import tempfile
 import zipfile
 import rasterio
+from rasterio.enums import Resampling
 import pandas as pd
 import pynhd as nhd
 from pynhd import NLDI
@@ -15,6 +16,8 @@ from datetime import datetime, timedelta
 import time
 import traceback
 from typing import Optional, Union, Tuple, List
+
+from lhd_processor.raster_warp import warp_mosaic
 
 # Direct NLDI endpoint for the initial COMID lookup. We bypass pynhd's
 # comid_byloc here because its pygeoutils JSON parser crashes (surfaces as
@@ -81,11 +84,6 @@ def _lookup_comid_direct(lon: float, lat: float, timeout: float = 30) -> Optiona
         return int(val) if val is not None else None
     except (TypeError, ValueError):
         return None
-
-try:
-    import gdal
-except ImportError:
-    from osgeo import gdal
 
 
 def sanitize_filename(filename):
@@ -455,20 +453,16 @@ def download_land_raster(lhd_id: int, dem_path: str, land_dir: str):
 
     # Keep raw ESA tiles in the main LAND folder to share across sites
     raw_esa_dir = os.path.join(land_dir, 'raw_esa')
-    raw_lc_tif = _download_esa_land_cover(geom, raw_esa_dir, dem_crs)
+    raw_lc_tifs = _download_esa_land_cover(geom, raw_esa_dir, dem_crs)
 
-    if raw_lc_tif:
-        # Align using GDAL Warp to ensure exact grid match
-        options = gdal.WarpOptions(
-            format='GTiff',
-            outputBounds=bounds,
-            width=ncols,
-            height=nrows,
-            dstSRS=dem_crs.to_wkt(),
-            resampleAlg=gdal.GRA_NearestNeighbour,
-            creationOptions=['COMPRESS=LZW']
+    if raw_lc_tifs:
+        # Mosaic + align to the DEM grid in one step (exact grid match)
+        warp_mosaic(
+            raw_lc_tifs, final_path,
+            bounds=(bounds[0], bounds[3], bounds[2], bounds[1]),
+            dst_crs=dem_crs, size=(ncols, nrows),
+            resampling=Resampling.nearest,
         )
-        gdal.Warp(final_path, raw_lc_tif, options=options)
         return final_path
     return None
 
@@ -515,10 +509,4 @@ def _download_esa_land_cover(geom, output_dir, dem_crs, year=2021):
     if not downloaded:
         return None
 
-    merged_path = os.path.join(output_dir, "merged_esa.tif")
-    try:
-        gdal.Warp(merged_path, downloaded, options=gdal.WarpOptions(format='GTiff', creationOptions=['COMPRESS=LZW']))
-        return merged_path
-    except Exception as e:
-        print(f"Error merging ESA tiles: {e}")
-        return None
+    return downloaded

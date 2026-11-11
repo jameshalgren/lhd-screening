@@ -56,16 +56,12 @@ def _save_failures(staging_dir: Path, failures: Dict[int, dict]) -> None:
     tmp.write_text(json.dumps(out, indent=2))
     tmp.replace(p)
 
-try:
-    import gdal
-except ImportError:
-    from osgeo import gdal
-
 _BACKEND_ROOT = Path(__file__).resolve().parent
 if str(_BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(_BACKEND_ROOT))
 
 from lhd_processor.land_raster import make_constant_land_raster
+from lhd_processor.raster_warp import warp_mosaic
 
 _X_SECTION_DIST_M = 500.0
 
@@ -160,15 +156,7 @@ def _build_one(
 
     site_dem_dir.mkdir(parents=True, exist_ok=True)
     try:
-        gdal.Warp(
-            str(dem_path),
-            tile_paths,
-            outputBounds=bbox,
-            outputBoundsSRS="EPSG:4326",
-            resampleAlg=gdal.GRA_Bilinear,
-            format="GTiff",
-            creationOptions=["COMPRESS=LZW"],
-        )
+        warp_mosaic(tile_paths, str(dem_path), bounds=bbox, bounds_crs="EPSG:4326")
     except Exception as e:
         _log(f"[{idx}/{total}] Dam {dam_id}: FAIL warp ({e})")
         return dam_id, f"warp-error:{e}"
